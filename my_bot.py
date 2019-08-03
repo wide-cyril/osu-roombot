@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import socket
-import sys
 import time
 
 server = "irc.ppy.sh"
@@ -18,11 +17,11 @@ irc.send(("NICK " + host + "\n").encode('utf-8'))
 
 def read_line():
     c = irc.recv(1)
-    line = c
+    bline = c
     while c != b'\n':
         c = irc.recv(1)
-        line += c
-    return line.decode('utf-8')[:-1]
+        bline += c
+    return bline.decode('utf-8')[:-1]
 
 
 def read_codes(codes, end):
@@ -31,16 +30,16 @@ def read_codes(codes, end):
     codes.add(end)
 
     while True:
-        line = read_line()
-        l = line.split(maxsplit=2)
+        cline = read_line()
+        l = cline.split(maxsplit=2)
         if l[0] == ':cho.ppy.sh' and l[1] in codes:
-            print(line[:-1])
+            print(cline[:-1])
         if l[1] == end:
             break
 
 
-def send(ch, Msg):
-    irc.send(('PRIVMSG ' + ch + " :" + Msg + '\n').encode('utf-8'))
+def send(chan, msgline):
+    irc.send(('PRIVMSG %s :%s\n' % (chan, msgline)).encode('utf-8'))
 
 
 read_codes([371, 372], 376)  # welcome message
@@ -51,7 +50,7 @@ read_codes([371, 372], 376)  # welcome message
 
 refs = {host.lower(): host}
 
-channel0 = '#mp_53780818'
+channel0 = '#mp_53783601'
 irc.send(("JOIN " + channel0 + "\n").encode('utf-8'))
 
 
@@ -60,11 +59,13 @@ irc.send(("JOIN " + channel0 + "\n").encode('utf-8'))
 
 class Room:
     def __init__(self):
-        self.players = ['' for x in range(16)]
+        self.players = ['']*16
         self.host = ''
         self.map_id = '0'
-        self.room_mod = []
-        self.player_mods = [[] for x in range(16)]
+        self.room_mods = []
+        self.player_mods = [[]]*16
+        self.keys = {}
+
 
     def remove(self, nick):
         for x in range(16):
@@ -81,7 +82,7 @@ room = Room()
 
 addref = []
 
-timer = time.time() - 30  # таймер для сообщении hostme
+timer = time.time()  # таймер для сообщении hostme
 
 fl_settings = False
 n_settings = 0
@@ -100,54 +101,65 @@ try:
             fl_settings = True
             time_settings = time.time()
         line = read_line()
-        l = line.split(maxsplit=3)
-        if (len(l) < 3 and l[0] != 'PING'):
+        sl = line.split(maxsplit=3)
+        if len(sl) < 3 and sl[0] != 'PING':
             print('Wrong line')
             raise MyException()
-        nick = l[0][1:].split('!')[0].lower()
-        if l[1] != 'QUIT':
-            print(line)
-        # обработка сообщений банчобота
-        if nick == BB.lower() and l[1] == 'PRIVMSG':
-            channel = l[2]
+        nick = sl[0][1:].split('!')[0]
 
+        # обработка сообщений банчобота
+        if nick == BB and sl[1] == 'PRIVMSG':
+            channel = sl[2]
             msg = line.split(':', maxsplit=2)[2].split(maxsplit=2)
+            print('%s/> %s: %s' % (channel, nick, ' '.join(msg)))
+            nick = nick.lower()
 
             # обработка вывода !mp settings
             if fl_settings:
-                if n_settings != 0:
-                    if msg[0] == 'Slot':
-                        n = int(msg[1])
-                        if n > prev_n + 1:
-                            for i in range(prev_n, n - 1):
-                                room.players[i] = ''
-                        prev_n = n
-                        m_ = msg[2].split('/', maxsplit=4)[4].split(maxsplit=1)[1].split('          ')
-
-                        room.players[n - 1] = m_[0]
-
+                if n_settings != 0 and msg[0] == 'Slot':
+                    n = int(msg[1])
+                    if n > prev_n + 1:
+                        for i in range(prev_n, n - 1):
+                            room.players[i] = ''
+                    prev_n = n
+                    m_ = [x.strip() for x in msg[2].split('/', maxsplit=4)[4].split(maxsplit=1)[1].split('   ', maxsplit=1)]
+                    room.players[n - 1] = m_[0]
+                    if len(m_) > 1:
                         m = [x.strip() for x in m_[1][1:-1].split('/')]
+                    room.player_mods[n - 1] = m.copy()
+                    if 'Host' in m:
+                        fl = True
+                        m.remove('Host')
+                    else:
+                        fl = False
 
-                        room.player_mods[n - 1] = m.copy()
+                    if fl:
+                        room.host = m_[0]
+                        print(m_[0], ':', 'host')
 
-                        if 'Host' in m:
-                            fl = True
-                            m.remove('Host')
-                        else:
-                            fl = False
-
-                        if fl:
-                            room.host = m_[0]
-
-                        n_settings -= 1
-                        if n_settings == 0:
-                            fl_settings = False
+                    n_settings -= 1
+                    if n_settings <= 0:
+                        fl_settings = False
 
                 elif msg[0] == 'Players:':
                     n_settings = int(msg[1])
                     prev_n = 0
-                    if n_settings == 0:
-                        fl_settings = False
+
+                elif msg[0] == 'Active':
+                    m = ' '.join(msg)
+                    m = [x.strip() for x in m.split(':')]
+                    room.keys[m[0]] = [x.strip() for x in m[1].split(',')]
+
+                elif msg[0] == 'Team':
+                    m = ' '.join(msg)
+                    m = [x.strip() for x in m.split(',')]
+                    m0 = m[0]
+                    m1 = m[1]
+                    m0 = [x.strip() for x in m0.split(':')]
+                    room.keys[m0[0]] = m0[1]
+                    m1 = [x.strip() for x in m1.split(':')]
+                    room.keys[m1[0]] = m1[1]
+
             if msg[0] == 'Created':
                 channel0 = '#mp_' + msg[2].split()[2].split('/')[4]
                 print('joining channel ' + channel0)
@@ -194,19 +206,20 @@ try:
                         if room.host == room.players[x]:
                             room.host = ''
                         room.players[x] = ''
-        elif l[1] == 'PRIVMSG':
-            channel = l[2]
+        elif sl[1] == 'PRIVMSG':
+            channel = sl[2]
             msg = line.split(':', maxsplit=2)[2]
-            # print(nick + ': ' + msg)
+            print('%s/> %s: %s' % (channel, nick, msg))
+            nick = nick.lower()
             if msg[:4].lower() == '!mp ':
                 com = msg[4:].lower().split(maxsplit=1)
-                if com[0] == 'settings' and nick in refs:
+                if com[0] == 'settings' and nick == host:
                     fl_settings = True
 
             if msg[:4].lower() == '!do ':
                 com = msg[4:].lower().split(maxsplit=1)
-
-                '''if com[0] == 'make':
+                '''
+                if com[0] == 'make':
                    if nick == host:
                       if len(com) == 2:
                          chs.add(com[1])
@@ -272,6 +285,7 @@ try:
                 # settings
                 elif com[0] == 'settings':
                     send(channel, str(room.players))
+                    send(channel, str(room.keys))
                     if room.host != '':
                         send(channel, room.host + ' is host')
                     else:
@@ -307,13 +321,13 @@ try:
         time_ = time.time()
         if room.host == '' and time_ - timer > 30:
             timer = time_
-            send(channel0, 'You can use !do hostme')
+            # send(channel0, 'You can use !do hostme')
 
         # ответ серверу
-        if l[0] == 'PING':
+        if sl[0] == 'PING':
             irc.send(('PONG ' + line[5:] + '\r\n').encode('utf-8'))
 
 except MyException:
     # send(channel0, '!mp close')
-    irc.send(("QUIT quit\n").encode('utf-8'))
+    irc.send("QUIT quit\n".encode('utf-8'))
     print('stop')
